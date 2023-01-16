@@ -12,14 +12,27 @@ local TitanHonor = {
     Version = "",
     Author = "",
   },
+  CurrencyConst = {
+    Id = 1792,
+    Icon = "Interface\\Icons\\achievement_legionpvptier4",
+    Name = "",
+    Description = "",
+    Color = "|cffffffff",
+  },
   IsInitialized = false,
 }
 function TitanHonor.GetCurrencyInfo()
-  local i = 0
-  for i = 1, C_CurrencyInfo.GetCurrencyListSize(), 1 do
-    info = C_CurrencyInfo.GetCurrencyListInfo(i)    
-    if tostring(info.iconFileID) == "1455894" then
-      return info
+  return C_CurrencyInfo.GetCurrencyInfo(TitanHonor.CurrencyConst.Id)
+end
+function TitanHonor.InitCurrencyConst()
+  local info = TitanHonor.GetCurrencyInfo()
+  if (info) then
+    TitanHonor.CurrencyConst.Name = info.name
+    TitanHonor.CurrencyConst.Description = info.description
+    
+    local r, g, b, hex = GetItemQualityColor(info.quality)
+    if (hex) then
+      TitanHonor.CurrencyConst.Color = '|c' .. hex
     end
   end
 end
@@ -29,6 +42,20 @@ function TitanHonor.Util_GetFormattedNumber(number)
   else
     return string.format ("%d", number)
   end
+end
+function TitanHonor.Util_WrapText(text, lineLength)
+  local wrappedText = ""
+  local currentLine = ""
+  for word in string.gmatch(text, "[^%s]+") do
+      if string.len(currentLine) + string.len(word) > lineLength then
+          wrappedText = wrappedText .. currentLine .. "\n"
+          currentLine = word .. " "
+      else
+          currentLine = currentLine .. word .. " "
+      end
+  end
+  wrappedText = wrappedText .. currentLine
+  return wrappedText
 end
 
 -- Load metadata
@@ -44,37 +71,31 @@ local BKFD_C_RED = "|cffff0000"
 local BKFD_C_WHITE = "|cffffffff"
 local BKFD_C_YELLOW = "|cffffcc00"
 
--- Text item colors (AARRGGBB)
-local BKFD_C_COMMON = "|cffffffff"
-local BKFD_C_UNCOMMON = "|cff1eff00"
-local BKFD_C_RARE = "|cff0070dd"
-local BKFD_C_EPIC = "|cffa335ee"
-local BKFD_C_LEGENDARY = "|cffff8000"
-local BKFD_C_ARTIFACT = "|cffe5cc80"
-local BKFD_C_BLIZZARD = "|cff00ccff"
-
 -- Load Library references
 local LT = LibStub("AceLocale-3.0"):GetLocale("Titan", true)
 local L = LibStub("AceLocale-3.0"):GetLocale(TitanHonor.Const.Id, true)
 
 -- Currency update variables
-local BKFD_HO_UPDATE_FREQUENCY = 0.0
+local updateFrequency = 0.0
 local currencyCount = 0.0
 local currencyMaximum
+local wasMaximumReached = false
 local seasonalCount = 0.0
 local isSeasonal = false
 local currencyDiscovered = false
 
 function TitanPanelHonorButton_OnLoad(self)
+  TitanHonor.InitCurrencyConst()
+
   self.registry = {
     id = TitanHonor.Const.Id,
     category = "Information",
     version = TitanHonor.Const.Version,
-    menuText = L["BKFD_TITAN_HO_MENU_TEXT"], 
+    menuText = TitanHonor.CurrencyConst.Name,
     buttonTextFunction = "TitanPanelHonorButton_GetButtonText",
-    tooltipTitle = BKFD_C_RARE..L["BKFD_TITAN_HO_TOOLTIP_TITLE"],
+    tooltipTitle = TitanHonor.CurrencyConst.Color .. TitanHonor.CurrencyConst.Name,
     tooltipTextFunction = "TitanPanelHonorButton_GetTooltipText",
-    icon = "Interface\\Icons\\achievement_legionpvptier4",
+    icon = TitanHonor.CurrencyConst.Icon,
     iconWidth = 16,
     controlVariables = {
       ShowIcon = true,
@@ -85,7 +106,6 @@ function TitanPanelHonorButton_OnLoad(self)
       ShowLabelText = false,
       ShowColoredText = false,
     },
-    -- frequency = 2,
   };
 
 
@@ -101,24 +121,29 @@ function TitanPanelHonorButton_GetButtonText(id)
     currencyCountText = TitanHonor.Util_GetFormattedNumber(currencyCount)
   end
 
-  if (currencyMaximum and not(currencyMaximum == 0) and currencyCount and currencyMaximum == currencyCount) then
-    currencyCountText = BKFD_C_RED..currencyCountText
+  if (wasMaximumReached) then
+    currencyCountText = BKFD_C_RED .. currencyCountText
   end
 
-  return L["BKFD_TITAN_HO_BUTTON_LABEL"], TitanUtils_GetHighlightText(currencyCountText)
+  return TitanHonor.CurrencyConst.Name .. ": ", TitanUtils_GetHighlightText(currencyCountText)
 end
 
 function TitanPanelHonorButton_GetTooltipText()
+  local currencyDescription = TitanHonor.Util_WrapText(TitanHonor.CurrencyConst.Description, 36)
+
+
   if (not currencyDiscovered) then
     return
-      L["BKFD_TITAN_HO_TOOLTIP_DESCRIPTION"].."\r"..
-      " \r"..
-      TitanUtils_GetHighlightText(L["BKFD_TITAN_HO_TOOLTIP_NOT_YET_DISCOVERED"])
+      currencyDescription .. "\r" ..
+      " \r" ..
+      TitanUtils_GetHighlightText(L["BKFD_TITAN_TOOLTIP_NOT_YET_DISCOVERED"])
   end
 
   -- Set which total value will be displayed
   local tooltipCurrencyCount = currencyCount
+  local tooltipCurrencyCurrentCount = 0
   if (isSeasonal) then
+    tooltipCurrencyCurrentCount = tooltipCurrencyCount
     tooltipCurrencyCount = seasonalCount
   end
 
@@ -133,36 +158,54 @@ function TitanPanelHonorButton_GetTooltipText()
       "%s",
       TitanHonor.Util_GetFormattedNumber(tooltipCurrencyCount)
     )
-  elseif (currencyMaximum == tooltipCurrencyCount) then
-    totalValue = BKFD_C_RED..totalValue
+  elseif (wasMaximumReached) then
+    totalValue = BKFD_C_RED .. totalValue
   end
+  local seasonCurrentValue = TitanHonor.Util_GetFormattedNumber(tooltipCurrencyCurrentCount)
   
-  local totalLabel = L["BKFD_TITAN_HO_TOOLTIP_COUNT_LABEL_TOTAL_MAXIMUM"]
+  local totalLabel = L["BKFD_TITAN_TOOLTIP_COUNT_LABEL_TOTAL_MAXIMUM"]
   if (isSeasonal) then
-    totalLabel = L["BKFD_TITAN_HO_TOOLTIP_COUNT_LABEL_TOTAL_SEASONAL"]
+    totalLabel = L["BKFD_TITAN_TOOLTIP_COUNT_LABEL_TOTAL_SEASONAL"]
   elseif (not currencyMaximum or currencyMaximum == 0) then
-    totalLabel = L["BKFD_TITAN_HO_TOOLTIP_COUNT_LABEL_TOTAL"]
+    totalLabel = L["BKFD_TITAN_TOOLTIP_COUNT_LABEL_TOTAL"]
   end
 
-  return
-    L["BKFD_TITAN_HO_TOOLTIP_DESCRIPTION"].."\r"..
-    " \r"..
-    totalLabel..TitanUtils_GetHighlightText(totalValue)
+  if (isSeasonal and currencyMaximum and currencyMaximum > 0) then
+    return
+      currencyDescription .. "\r" ..
+      " \r" ..
+      L["BKFD_TITAN_TOOLTIP_COUNT_LABEL_TOTAL"]..TitanUtils_GetHighlightText(seasonCurrentValue) .. "\r" ..
+      totalLabel .. TitanUtils_GetHighlightText(totalValue)
+  else
+    return
+      currencyDescription .. "\r" ..
+      " \r" ..
+      totalLabel .. TitanUtils_GetHighlightText(totalValue)
+  end
 end
 
 function TitanPanelHonorButton_OnUpdate(self, elapsed)
-  BKFD_HO_UPDATE_FREQUENCY = BKFD_HO_UPDATE_FREQUENCY - elapsed;
+  updateFrequency = updateFrequency - elapsed;
 
-  if BKFD_HO_UPDATE_FREQUENCY <= 0 then
-    BKFD_HO_UPDATE_FREQUENCY = 1;
+  if updateFrequency <= 0 then
+    updateFrequency = 1;
 
-    local info = TitanHonor.GetCurrencyInfo()
+    local info = TitanHonor.GetCurrencyInfo(TitanHonor.CurrencyConst.Id)
     if (info) then
-      currencyDiscovered = true
+      currencyDiscovered = info.discovered
       currencyCount = tonumber(info.quantity)
       currencyMaximum = tonumber(info.maxQuantity)
       seasonalCount = tonumber(info.totalEarned)
       isSeasonal = info.useTotalEarnedForMaxQty
+
+      wasMaximumReached =
+          currencyMaximum and not(currencyMaximum == 0)
+          and isSeasonal and seasonalCount
+          and seasonalCount >= currencyMaximum
+        or
+          currencyMaximum and not(currencyMaximum == 0)
+          and not isSeasonal and currencyCount
+          and currencyCount >= currencyMaximum
     end
 
     TitanPanelButton_UpdateButton(TitanHonor.Const.Id)
@@ -173,11 +216,10 @@ function TitanPanelHonorButton_OnEvent(self, event, ...)
   if (event == "PLAYER_ENTERING_WORLD") then
     if (not TitanHonor.IsInitialized and DEFAULT_CHAT_FRAME) then
       DEFAULT_CHAT_FRAME:AddMessage(
-        BKFD_C_YELLOW..TitanHonor.Const.DisplayName.." "..
-        BKFD_C_GREEN..TitanHonor.Const.Version..
-        BKFD_C_YELLOW.." by "..
-        BKFD_C_ORANGE..TitanHonor.Const.Author)
-      -- TitanHonor.GetCurrencyInfo()
+        BKFD_C_YELLOW .. TitanHonor.Const.DisplayName .. " " ..
+        BKFD_C_GREEN .. TitanHonor.Const.Version ..
+        BKFD_C_YELLOW .. " by "..
+        BKFD_C_ORANGE .. TitanHonor.Const.Author)
       TitanPanelButton_UpdateButton(TitanHonor.Const.Id)
       TitanHonor.IsInitialized = true
     end
